@@ -1,0 +1,385 @@
+---
+title: "Problem Set II"
+author: "Irem Aydas"
+date: "23 05 2019"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+fontsize: 10pt
+---
+```{r, echo=F, warning=FALSE, message=FALSE, eval=FALSE}
+#Libraries
+library(AER)
+library(pscl)
+library(ggplot2)
+library(pROC)
+library(MASS)
+library(multinbmod)
+library(sandwich)
+library(lmtest)
+library(foreign)
+library(compactr)
+library(glmmADMB)
+library(ISLR)
+library(glmnet)
+library(ggplot2)
+
+```
+
+
+# Part I
+
+```{r, include=TRUE, echo=TRUE,cache=TRUE}
+# Load the data
+myData=read.csv("https://raw.githubusercontent.com/babakrezaee/MethodsCourses/master/DataSets/susedcars.csv", stringsAsFactors=FALSE,encoding="UTF-16")
+myData=na.omit(myData) 
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+head(myData$displacement)[1:10]
+myData$displacement = as.factor(myData$displacement)
+
+myData$year=as.factor(myData$year)
+library(tidyverse)
+myData$year=fct_collapse(myData$year,
+                         before.2000 = c("1994", "1995", "1996", "1997", "1998",
+                                         "1999", "2000"),
+                         btw2001_05= c("2001", "2002", "2003", "2004", "2005"),
+                         btw2006_09 = c("2006", "2007", "2008", "2009"),
+                         after.2009 = c("2010", "2011", "2012", "2013"))
+```
+
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Creating training and test datasets
+n=nrow(myData)
+ntrain = floor(n*.75)
+ii = sample(1:n,ntrain)
+mytrain= myData[ii,]
+mytest = myData[-ii,]
+trainY <- mytrain$price
+testY <- mytest$price
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+# Interactions
+#Interactions between displacement and mileage, mileage and trim, color and mileage.
+#Some of the variables are related. For instance, older cars has higher mileages, or trim model may be related with color.
+#Therefore, I will not include interactions between related variables.
+library(glmnet)
+trainX= model.matrix(trainY~(mytrain$trim + mytrain$isOneOwner+ mytrain$mileage + mytrain$year 
+                               + mytrain$color+ mytrain$displacement + mytrain$displacement*mytrain$mileage
+                               +mytrain$mileage*mytrain$trim+mytrain$color*mytrain$mileage), mytrain)[, -1]
+
+testX= model.matrix(testY~(mytest$trim + mytest$isOneOwner+ mytest$mileage + mytest$year + mytest$color+ mytest$displacement + mytest$displacement*mytest$mileage
+                               +mytest$mileage*mytest$trim+mytest$color*mytest$mileage), mytest)[, -1]
+scale=scale(trainX)
+scale=scale(testX)
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Ridge, Lasso, E-net
+gsize=100
+grid=5^seq(10,-2,length=gsize)
+##Ridge
+ridge.mod=glmnet(trainX,trainY,alpha=0,lambda=grid, standardize=FALSE) 
+#Finding lambda by CV
+set.seed(14)
+cv.out = cv.glmnet(trainX,trainY,alpha=0,lambda=grid)
+bestlam = cv.out$lambda.min
+ridge.fit = predict(ridge.mod,s=bestlam,newx=testX)
+##Lasso
+lasso.mod=glmnet(trainX,trainY,alpha=0,lambda=grid, standardize=FALSE) 
+#Finding lambda by CV
+set.seed(14)
+cv.out = cv.glmnet(trainX,trainY,alpha=1,lambda=grid)
+bestlam = cv.out$lambda.min
+lasso.fit = predict(lasso.mod,s=bestlam,newx=testX)
+##enet
+enet.mod=glmnet(trainX,trainY,alpha=0.5,lambda=grid, standardize=FALSE) 
+#Finding lambda by CV
+set.seed(14)
+cv.out = cv.glmnet(trainX,trainY,alpha=0.5,lambda=grid)
+bestlam = cv.out$lambda.min
+enet.fit = predict(lasso.mod,s=bestlam,newx=testX)
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Comparison
+predictions= data.frame(ridge.fit,
+                          lasso.fit,
+                          enet.fit,
+                          testY)
+names(predictions)= c("ridge", "lasso", "enet", "actual")
+y=myData$price
+linear=lm(myData$price~(myData$trim + myData$isOneOwner+ myData$mileage + myData$year + myData$color+ myData$displacement+ myData$displacement*myData$mileage
+                               +myData$mileage*myData$trim+myData$color*myData$mileage), myData)
+
+lm.fit = linear$fitted
+RSS <- c(crossprod(linear$residuals))
+MSE <- RSS / length(linear$residuals)
+RMSE <- sqrt(MSE)
+```
+#Linear model has the lowest RMSE
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+ridge_error <- sqrt(mean((predictions$ridge - predictions$actual)^2))
+lasso_error <- sqrt(mean((predictions$lasso - predictions$actual)^2))
+enet_error <- sqrt(mean((predictions$enet - predictions$actual)^2))
+linear_error = sqrt(mean((predictions$linear - predictions$linear)^2))
+results <- list('ridge' = ridge_error, 'lasso' = lasso_error, 
+                'enet' = enet_error, 'linear' = RMSE)
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Comparison
+print(results)
+
+fmat = cbind(y, lm.fit, ridge.fit,lasso.fit, enet.fit)
+colnames(fmat) = c('y', 'linear', 'ridge','lasso', 'enet' )
+pairs(fmat)
+```
+
+# Part II
+```{r, include=TRUE, echo=TRUE,cache=TRUE}
+mytrain=read.csv("https://raw.githubusercontent.com/babakrezaee/MethodsCourses/master/DataSets/kaggle-del-train.csv", stringsAsFactors=FALSE,encoding="UTF-16")
+mytest=read.csv("https://raw.githubusercontent.com/babakrezaee/MethodsCourses/master/DataSets/kaggle-del-test.csv", stringsAsFactors=FALSE,encoding="UTF-16")
+mytrain$DelIn2Yr = as.factor(mytrain$DelIn2Yr)
+mytest$DelIn2Yr = as.factor(mytest$DelIn2Yr)
+```
+
+```{r, include=TRUE, echo=TRUE,cache=TRUE}
+total=rbind (mytrain, mytest)
+attach(total)
+library(ggplot2)
+ggplot(total,aes(age,DelIn2Yr))+
+  #geom_point()+
+  stat_summary(geom = "point", size = 1)+
+  ggtitle("DelIn2Yr vs Age")+
+  theme(plot.title = element_text(hjust = .5))
+```
+
+```{r, include=TRUE, echo=TRUE,cache=TRUE}
+model1=glm(DelIn2Yr ~age, data=total, family=binomial(link='logit'))
+summary(model1)
+```
+
+```{r, include=TRUE, echo=TRUE,cache=TRUE}
+
+glm.probs=predict(model1,type = "response")
+glm.probs[1:10]  
+model2 = glm(DelIn2Yr ~ age + NumberOfTimes90DaysLate,
+             data = mytrain,
+             family = binomial(link="logit"))
+summary(model2)
+glm.probs2 = predict(model2,type = "response")
+glm.probs2[1:10] 
+```
+
+```{r, include=TRUE, echo=TRUE,cache=TRUE}
+#Plotting probability 
+boxplot(age~DelIn2Yr,total)
+```
+
+```{r, include=TRUE, echo=TRUE,cache=TRUE}
+##plot in-sample phat
+phatis = predict(model1,mytrain,type="response") 
+plot(mytrain$DelIn2Yr, phatis)
+
+##OOS Lift and ROC/AUC
+phat = predict(model1,mytest,type="response")
+phat1 = predict(model2,mytest,type="response")
+
+source("https://raw.githubusercontent.com/ChicagoBoothML/HelpR/master/lift.R")
+lift.many.plot(list(phat,phat1),mytest$DelIn2Yr)
+```
+
+```{r, include=TRUE, echo=TRUE,cache=TRUE}
+##ROC and AUC
+library(pROC)
+par(mfrow=c(1,2))
+par(mai=c(1,1,.5,.5))
+rocR = roc(response=mytest$DelIn2Yr,predictor=phat)
+AUC = auc(rocR)
+plot(rocR)
+title(main=paste("model1 AUC= ",round(AUC,2)))
+rocR = roc(response=mytest$DelIn2Yr,predictor=phat1)
+AUC = auc(rocR)
+plot(rocR)
+title(main=paste("model2 AUC= ",round(AUC,2)))
+```
+
+#####Part 3#####
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Load the data
+nsa_ff=read.csv("https://raw.githubusercontent.com/iremaydas/SU_POLS537/master/nsa_ff.csv", stringsAsFactors=FALSE,encoding="UTF-16")
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Distibution of best fatality
+ggplot(data=nsa_ff, aes(nsa_ff$best_fatality)) + 
+  geom_histogram(breaks=seq(0, 2000, by = 500), 
+                 col="red", 
+                 fill="green", 
+                 alpha = 1) + 
+  labs(title="Distribution of Civilian Fatalities") +
+  labs(x="Annual number of Civilian Fatalities", y="Count") + 
+  xlim(c(0,20000)) + 
+  ylim(c(0,1000))
+```
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Necessary data generation
+newdata=nsa_ff[ which(nsa_ff$foreign_f=='1'), ]
+esample= cbind(nsa_ff$best_fatality, nsa_ff$foreign_f, nsa_ff$rebstrength, nsa_ff$loot,nsa_ff$mobcap,nsa_ff$territorial,nsa_ff$islamist_nsa,nsa_ff$leftist,nsa_ff$length,nsa_ff$pop_dens_ln,nsa_ff$gdp_cap_gr,nsa_ff$govtbestfatal_ln,nsa_ff$fatality_lag_ln,nsa_ff$intensity)
+esample=data.frame(esample)
+esample=na.omit(esample)
+esample1= cbind(newdata$best_fatality, newdata$b_neigh, newdata$ff_coethnic, newdata$rebstrength,newdata$loot,newdata$territorial,newdata$islamist_nsa,newdata$leftist,newdata$length,newdata$pop_dens_ln,newdata$gdp_cap_gr,newdata$govtbestfatal_ln,newdata$fatality_lag_ln,newdata$intensity)
+esample1=data.frame(esample1)
+esample1=na.omit(esample1)
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Necessary data split for OOS
+set.seed(1234)
+n=nrow(nsa_ff)
+ntrain = floor(n*.75)
+ii = sample(1:n,ntrain)
+mytrain= nsa_ff[ii,]
+mytest = nsa_ff[-ii,]
+n2=nrow(newdata)
+n2train=floor(n2*.75)
+ii = sample(1:n2,n2train)
+mytrain2=newdata[ii,]
+mytest2=newdata[-ii,]
+n3=nrow(esample)
+n3train=floor(n3*.75)
+ii = sample(1:n3,n3train)
+mytrain3=esample[ii,]
+mytest3=esample[-ii,]
+n4=nrow(esample1)
+n4train = floor(n4*.75)
+ii = sample(1:n4,n4train)
+mytrain4= esample1[ii,]
+mytest4 = esample1[-ii,]
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#RMSE
+rmse = function(y, ypred) {
+  rmse = sqrt(mean((y - ypred)^2))
+  return(rmse)
+}
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(MASS)
+library(sandwich)
+library(lmtest)
+#1a
+summary(model_1a <- glm.nb(best_fatality ~ as.factor(foreign_f), data = nsa_ff))
+coeftest(model_1a, vcov = vcovCL(model_1a, cluster = nsa_ff$dyadid))
+##1a predictive power
+train.1a=glm.nb(best_fatality ~ as.factor(foreign_f), data = mytrain)
+testerror1a= rmse(mytest$best_fatality, predict(train.1a, mytest))
+cat("RMSE of Model 1a is",round(testerror1a,digits=2),"\n")
+##1b
+summary(model_1b <- glm.nb(best_fatality ~ as.factor(b_neigh) + as.factor(ff_coethnic), data=newdata))
+coeftest(model_1b, vcov = vcovCL(model_1b, cluster = newdata$dyadid))
+##1b predictive power
+train.1b=glm.nb(best_fatality ~ as.factor(b_neigh) + as.factor(ff_coethnic), data = mytrain2)
+testerror1b= rmse(mytest2$best_fatality, predict(train.1b, mytest2))
+cat("RMSE of Model 1b is",round(testerror1b,digits=2),"\n")
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+##2a
+summary(model_2a <- glm.nb(X1 ~ X2 + X3 +X4+ X6+ X7 +X8 +X9,data=esample))
+##2a predictive power
+train.2a=glm.nb(X1 ~ X2 + X3 +X4+ X6+ X7 +X8 +X9, data = mytrain3)
+pred2a= predict(train.2a,mytest3)
+testerror2a=rmse(mytest3$X1, pred2a) 
+cat("RMSE of Model 2a is",round(testerror2a,digits=2),"\n")
+##2b
+summary(model_2b <- glm.nb(X1 ~ X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9,  control = glm.control(maxit=5), method = "glm.fit", data=esample1))
+##2b predictive power
+train.2b=glm.nb(X1 ~ X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9, control = glm.control(maxit=4), method = "glm.fit", data = mytrain4)
+pred2b = predict(train.2b,mytest4)
+testerror2b=rmse(mytest4$X1, pred2b) 
+cat("RMSE of Model 2b is",round(testerror2b,digits=2),"\n")
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#3a
+summary(model_3a <- glm.nb(X1 ~ X2 +X10+ X11+ X12 +X13 +X14 ,control = glm.control(maxit=4), method = "glm.fit", data=esample))
+##3a predictive power
+train.3a=glm.nb(X1 ~ X2 +X10+ X11+ X12 +X13 +X14, control = glm.control(maxit=4), method = "glm.fit", data = mytrain3)
+pred3a = predict(train.3a,mytest3)
+testerror3a=rmse(mytest3$X1, pred3a) 
+cat("RMSE of Model 3a is",round(testerror3a,digits=2),"\n")
+#3b
+summary(model_3b <- glm.nb(X1 ~ X2 + X3 + X10 + X11 + X12 + X13 + X14,  control = glm.control(maxit=5), method = "glm.fit", data=esample1))
+##3b predictive power
+train.3b=glm.nb(X1 ~ X2 + X3 + X10 + X11 + X12 + X13 + X14, control = glm.control(maxit=100), data = mytrain4)
+pred3b = predict(train.3b,mytest4)
+testerror3b=rmse(mytest4$X1, pred3b)
+cat("RMSE of Model 3b is",round(testerror3b,digits=2),"\n")
+
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(MASS)
+##4a
+model_4a <- glm.nb(X1 ~ X2 +X3+ X4+ X6 +X7 +X8 +X9+ X10 +X11+ X12+ X13 +X14, control = glm.control(maxit=10), method = "glm.fit", data=esample)
+#4a predictive power
+train.4a=glm.nb(X1 ~ X2 +X3+ X4+ X6 +X7 +X8 +X9+ X10 +X11+ X12+ X13 +X14, control = glm.control(maxit=4), method = "glm.fit", data = mytrain3)
+pred4a = predict(train.4a,mytest3)
+testerror4a=rmse(mytest3$X1, pred4a)
+cat("RMSE of Model 4a is",round(testerror4a,digits=2),"\n")
+
+#4b
+model_4b = glm.nb(X1 ~ X2 + X3 + X4 + X5 + X6 + X7 + X8 +X9 + X10 + X11 + X12 + X13 + X14,  control = glm.control(maxit=4), method = "glm.fit", data=esample1)
+##4b predictive power
+train.4b=glm.nb(X1 ~ X2 + X3 + X4 + X5 + X6 + X7 + X8 +X9 + X10 + X11 + X12 + X13 + X14, control = glm.control(maxit=100), method = "glm.fit", data = mytrain4)
+pred4b = predict(train.4b,mytest4)
+testerror4b=rmse(mytest4$X1, pred4b) 
+cat("RMSE of Model 4b is",round(testerror4b,digits=2),"\n")
+```
+
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(AER)
+#Poisson vs NB 
+##Lets check overdispersion
+mean(nsa_ff$best_fatality, na.rm=TRUE)
+var(nsa_ff$best_fatality,na.rm=TRUE)
+#Mean and variance are not equal. But is this difference significant?
+poissonmodel = glm(best_fatality ~ ., family="poisson", data=nsa_ff)
+nbmodel=glm.nb(best_fatality ~ ., data = nsa_ff)
+dispersiontest(poissonmodel,trafo=1)
+#There is no overdispersion
+lrtest(poissonmodel, nbmodel )
+#Actually Poisson model fits better
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(pscl)
+library(MASS)
+##ZIP VS NB
+zip=zeroinfl(formula = nsa_ff$best_fatality ~ foreign_f + rebstrength +loot
+                 + territorial +islamist_nsa+ leftist + length + pop_dens_ln
+                 + gdp_cap_gr +govtbestfatal_ln+ fatality_lag_ln +intensity 
+                 | foreign_f + rebstrength +loot+ territorial+ islamist_nsa
+                 + leftist+ length+pop_dens_ln +gdp_cap_gr +govtbestfatal_ln +fatality_lag_ln 
+                 +intensity, data=nsa_ff)
+
+nb1model=glm.nb(nsa_ff$best_fatality ~ foreign_f + rebstrength +loot
+                        + territorial +islamist_nsa+ leftist + length + pop_dens_ln
+                        + gdp_cap_gr +govtbestfatal_ln+ fatality_lag_ln +intensity 
+                        + foreign_f + rebstrength +loot+ territorial+ islamist_nsa
+                        + leftist+ length+pop_dens_ln +gdp_cap_gr +govtbestfatal_ln +fatality_lag_ln 
+                        +intensity, data=nsa_ff)
+#According to the vuong test, the Zero Inflated model is a better fit of the data.
+
+vuong(nb1model, zip)
+```
+
